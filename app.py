@@ -1,12 +1,14 @@
 import streamlit as st
 import cv2
 import os
+import numpy as np
+import pandas as pd
 from datetime import datetime
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 
-st.title("AI Face Attendance System")
+st.title("AI Face Recognition Attendance System")
 
-# create dataset folder
+# create dataset
 if not os.path.exists("dataset"):
     os.makedirs("dataset")
 
@@ -20,59 +22,66 @@ face_cascade = cv2.CascadeClassifier(
     cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
 )
 
+# =========================
+# LOAD DATASET
+# =========================
 
-# attendance function
+def load_faces():
+
+    encodings = []
+    names = []
+
+    for file in os.listdir("dataset"):
+
+        path = f"dataset/{file}"
+
+        img = cv2.imread(path)
+
+        gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+
+        hist = cv2.calcHist([gray],[0],None,[256],[0,256])
+
+        hist = cv2.normalize(hist,hist).flatten()
+
+        encodings.append(hist)
+
+        names.append(file.split(".")[0])
+
+    return encodings,names
+
+
+# =========================
+# ATTENDANCE
+# =========================
+
 def mark_attendance(name):
+
     with open("attendance.csv","a") as f:
-        time_now = datetime.now().strftime("%H:%M:%S")
-        f.write(f"{name},{time_now}\n")
+
+        now = datetime.now().strftime("%H:%M:%S")
+
+        f.write(f"{name},{now}\n")
 
 
-mode = st.sidebar.selectbox(
+menu = st.sidebar.selectbox(
     "Menu",
-    ["Face Detection","Register Face","Attendance Log"]
+    ["Register Face","Face Recognition","Attendance Log"]
 )
 
+# =========================
+# REGISTER
+# =========================
 
-# =====================
-# FACE DETECTION
-# =====================
-
-if mode == "Face Detection":
-
-    class FaceDetection(VideoTransformerBase):
-
-        def transform(self, frame):
-            img = frame.to_ndarray(format="bgr24")
-
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-
-            faces = face_cascade.detectMultiScale(gray,1.3,5)
-
-            for (x,y,w,h) in faces:
-                cv2.rectangle(img,(x,y),(x+w,y+h),(0,255,0),2)
-
-            return img
-
-    webrtc_streamer(
-        key="face-detect",
-        video_transformer_factory=FaceDetection
-    )
-
-
-# =====================
-# REGISTER FACE
-# =====================
-
-elif mode == "Register Face":
+if menu == "Register Face":
 
     name = st.text_input("Enter Name")
 
     capture = st.button("Capture Face")
 
-    class RegisterFace(VideoTransformerBase):
+    class Register(VideoTransformerBase):
 
-        def transform(self, frame):
+        def transform(self,frame):
+
             img = frame.to_ndarray(format="bgr24")
 
             gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
@@ -85,35 +94,90 @@ elif mode == "Register Face":
 
                 if capture and name!="":
 
-                    face_img = img[y:y+h,x:x+w]
+                    face = img[y:y+h,x:x+w]
 
-                    file_path = f"dataset/{name}.jpg"
+                    cv2.imwrite(f"dataset/{name}.jpg",face)
 
-                    cv2.imwrite(file_path,face_img)
+                    st.success("Face Registered")
+
+            return img
+
+    webrtc_streamer(
+        key="register",
+        video_transformer_factory=Register
+    )
+
+
+# =========================
+# FACE RECOGNITION
+# =========================
+
+elif menu == "Face Recognition":
+
+    encodings,names = load_faces()
+
+    class Recognition(VideoTransformerBase):
+
+        def transform(self,frame):
+
+            img = frame.to_ndarray(format="bgr24")
+
+            gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+
+            faces = face_cascade.detectMultiScale(gray,1.3,5)
+
+            for (x,y,w,h) in faces:
+
+                face = gray[y:y+h,x:x+w]
+
+                hist = cv2.calcHist([face],[0],None,[256],[0,256])
+
+                hist = cv2.normalize(hist,hist).flatten()
+
+                scores = []
+
+                for enc in encodings:
+
+                    score = cv2.compareHist(hist,enc,cv2.HISTCMP_CORREL)
+
+                    scores.append(score)
+
+                if len(scores)>0:
+
+                    best = np.argmax(scores)
+
+                    name = names[best]
+
+                    cv2.rectangle(img,(x,y),(x+w,y+h),(0,255,0),2)
+
+                    cv2.putText(
+                        img,
+                        name,
+                        (x,y-10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        1,
+                        (0,255,0),
+                        2
+                    )
 
                     mark_attendance(name)
 
             return img
 
     webrtc_streamer(
-        key="register",
-        video_transformer_factory=RegisterFace
+        key="recognition",
+        video_transformer_factory=Recognition
     )
 
 
-# =====================
-# ATTENDANCE LOG
-# =====================
+# =========================
+# LOG
+# =========================
 
-elif mode == "Attendance Log":
+elif menu == "Attendance Log":
 
     st.subheader("Attendance Log")
 
-    if os.path.exists("attendance.csv"):
-        st.dataframe(
-            st.session_state.get("attendance",None)
-        )
+    df = pd.read_csv("attendance.csv")
 
-        import pandas as pd
-        df = pd.read_csv("attendance.csv")
-        st.dataframe(df)
+    st.dataframe(df)
