@@ -3,14 +3,18 @@ import cv2
 import os
 import numpy as np
 import pandas as pd
+import time
 from datetime import datetime
 from streamlit_webrtc import webrtc_streamer, VideoTransformerBase
 
-st.set_page_config(page_title="AI Face Attendance",layout="wide")
+st.set_page_config(page_title="AI Face Attendance", layout="wide")
 
 st.title("🚀 AI Face Recognition Attendance System")
 
-# create folders
+# =========================
+# INIT FILES
+# =========================
+
 if not os.path.exists("dataset"):
     os.makedirs("dataset")
 
@@ -59,13 +63,13 @@ def mark_attendance(name):
         f.write(f"{name},{now}\n")
 
 
-menu=st.sidebar.selectbox(
+menu = st.sidebar.selectbox(
     "Menu",
     ["Register Face","Face Recognition","Dashboard"]
 )
 
 # =========================
-# REGISTER
+# REGISTER FACE
 # =========================
 
 if menu=="Register Face":
@@ -110,54 +114,76 @@ if menu=="Register Face":
 
 elif menu=="Face Recognition":
 
-    st.subheader("Face Recognition")
+    st.subheader("Real-Time Face Recognition")
 
-    encodings,names=load_faces()
+    encodings,names = load_faces()
 
     class Recognition(VideoTransformerBase):
 
+        def __init__(self):
+            self.prev_time = 0
+
         def transform(self,frame):
 
-            img=frame.to_ndarray(format="bgr24")
+            img = frame.to_ndarray(format="bgr24")
 
-            gray=cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
 
-            faces=face_cascade.detectMultiScale(gray,1.3,5)
+            faces = face_cascade.detectMultiScale(gray,1.3,5)
 
             for (x,y,w,h) in faces:
 
-                face=gray[y:y+h,x:x+w]
+                face = gray[y:y+h,x:x+w]
 
-                hist=cv2.calcHist([face],[0],None,[256],[0,256])
-                hist=cv2.normalize(hist,hist).flatten()
+                hist = cv2.calcHist([face],[0],None,[256],[0,256])
+                hist = cv2.normalize(hist,hist).flatten()
 
                 scores=[]
 
                 for enc in encodings:
 
-                    score=cv2.compareHist(hist,enc,cv2.HISTCMP_CORREL)
+                    score = cv2.compareHist(hist,enc,cv2.HISTCMP_CORREL)
 
                     scores.append(score)
 
                 if len(scores)>0:
 
-                    best=np.argmax(scores)
+                    best = np.argmax(scores)
 
-                    name=names[best]
+                    confidence = scores[best]
+
+                    name = names[best]
+
+                    label = f"{name} ({confidence:.2f})"
 
                     cv2.rectangle(img,(x,y),(x+w,y+h),(0,255,0),2)
 
                     cv2.putText(
                         img,
-                        name,
+                        label,
                         (x,y-10),
                         cv2.FONT_HERSHEY_SIMPLEX,
-                        1,
+                        0.8,
                         (0,255,0),
                         2
                     )
 
                     mark_attendance(name)
+
+            # FPS calculation
+            current_time = time.time()
+            fps = 1/(current_time-self.prev_time) if self.prev_time else 0
+            self.prev_time = current_time
+
+            cv2.putText(
+                img,
+                f"FPS: {int(fps)}",
+                (20,40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255,0,0),
+                2
+            )
 
             return img
 
