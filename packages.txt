@@ -1,3 +1,2 @@
-cmake
 libgl1
-build-essential
+libglib2.0-0
